@@ -867,8 +867,8 @@ def seed_no_of_girders(overall_width: float) -> int:
         raise ValueError("Overall bridge width must be positive.")
     return max(2, ceil(overall_width / DEFAULT_GIRDER_SPACING))
 
-def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
-    """Parse basic inputs and solve bridge layout. Updates basic_input_dict in-place."""
+def _layout_solver(basic_input_dict: dict):
+    """Build the layout solver from the current widths. Returns (solver, n_footpaths, footpath_width, railing_width)."""
     from .initial_sizing import BridgeConfigurationSolver
 
     def _railing_width_m(value) -> float:
@@ -879,17 +879,6 @@ def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
         return width / 1000.0 if width > 10 else width
 
     footpath_str = str(basic_input_dict.get(KEY_FOOTPATH, 'None')).strip()
-
-    # Fill sub-tab defaults before reading any typical-section keys (e.g. footpath width)
-    _update_typical_section_defaults(basic_input_dict)
-
-    _update_loading_tab_defaults(basic_input_dict)
-
-    _update_support_conditions_defaults(basic_input_dict)
-    
-    _update_design_options_defaults(basic_input_dict)
-    
-    _update_design_options_cont_defaults(basic_input_dict)
 
     if footpath_str in ('None', ''):
         n_footpaths, footpath_width, railing_width = 0, 0.0, 0.0
@@ -912,6 +901,23 @@ def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
         median_width=float(median_width),
         n_footpaths=n_footpaths,
     )
+    return solver, n_footpaths, footpath_width, railing_width
+
+
+def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
+    """Parse basic inputs and solve bridge layout. Updates basic_input_dict in-place."""
+    # Fill sub-tab defaults before reading any typical-section keys (e.g. footpath width)
+    _update_typical_section_defaults(basic_input_dict)
+
+    _update_loading_tab_defaults(basic_input_dict)
+
+    _update_support_conditions_defaults(basic_input_dict)
+
+    _update_design_options_defaults(basic_input_dict)
+
+    _update_design_options_cont_defaults(basic_input_dict)
+
+    solver, n_footpaths, footpath_width, railing_width = _layout_solver(basic_input_dict)
     no_of_girders = int(
         basic_input_dict.get(KEY_TS_NO_OF_GIRDERS)
         or seed_no_of_girders(solver.calculate_overall_bridge_width())
@@ -936,4 +942,25 @@ def solve_extend_basic_input_dict(basic_input_dict: dict) -> None:
 
     # Update Dynamic per-girder/member keys
     _on_no_of_girders_changed(basic_input_dict)
+
+
+def solve_girder_spacing_change(input_dict: dict, girder_spacing: float) -> None:
+    """Apply a user-set girder spacing (m): girder count stays, overhang absorbs the difference.
+
+    Same rule as editing Girder Spacing in Additional Inputs. Expects an input dict that
+    solve_extend_basic_input_dict has already filled. Raises ValueError if the spacing
+    cannot fit the bridge width; input_dict is left unchanged in that case.
+    """
+    solver, *_ = _layout_solver(input_dict)
+    result = solver._solve_layout(
+        no_of_girders=int(input_dict[KEY_TS_NO_OF_GIRDERS]),
+        girder_spacing=float(girder_spacing),
+        deck_overhang=float(input_dict.get(KEY_TS_DECK_OVERHANG) or 0.0),
+        changed_field="spacing",
+    )
+    input_dict.update({
+        KEY_TS_OVERALL_WIDTH:  result.overall_width,
+        KEY_TS_GIRDER_SPACING: result.girder_spacing,
+        KEY_TS_DECK_OVERHANG:  result.deck_overhang,
+    })
 

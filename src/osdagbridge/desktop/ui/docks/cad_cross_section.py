@@ -6,7 +6,7 @@ Author: Arushi
 
 import math
 from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon, QPixmap
 from osdagbridge.core.utils.common import *
 from osdagbridge.desktop.cad.irc5_geometry import (
@@ -14,10 +14,14 @@ from osdagbridge.desktop.cad.irc5_geometry import (
     RailingGeometry,
     MedianGeometry,
 )
+from .cad_label_editing import EditableCadLabels
 
 
-class CrossSectionCADWidget(QWidget):
+class CrossSectionCADWidget(EditableCadLabels, QWidget):
     """Widget for drawing bridge cross-section view"""
+    # (input key, typed text) after a label is edited in place; see EditableCadLabels
+    label_value_edited = Signal(str, str)
+
     # ===== SHARED CAD COLORS =====
     GIRDER_COLOR = QColor(179, 180, 160) 
     STIFFENER_COLOR = QColor(210, 210, 205)
@@ -729,7 +733,8 @@ class CrossSectionCADWidget(QWidget):
         # clear hover labels and zones at start of each paint
         self.hover_labels = []
         self.cross_section_hover_zones = []
-        
+        self._begin_editable_labels()
+
         painter = QPainter(self)
         try:
             painter.setRenderHint(QPainter.Antialiasing)
@@ -766,6 +771,7 @@ class CrossSectionCADWidget(QWidget):
             max_width + 2 * padding,
             total_height + 2 * padding
         )
+        self._last_text_rect = bg_rect  # read by callers that register an editable label
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(bg_color))
@@ -2122,10 +2128,11 @@ class CrossSectionCADWidget(QWidget):
                 label_cw += f" = {cw_m:.2f} m"
             
             self.draw_dimension_arrow(painter, actual_cw_start, Y_TOP_COMMON, median_start_x, Y_TOP_COMMON,
-                                    label_cw, True, 
+                                    label_cw, True,
                                     extension_direction='down',
                                     extension_end_y=deck_top_y)
-            
+            self._register_editable_label(KEY_CARRIAGEWAY_WIDTH, self._last_text_rect, cw_m)
+
             # Median dimension
             median_m = median_width / 1000
             label_median = "Median"
@@ -2139,9 +2146,10 @@ class CrossSectionCADWidget(QWidget):
             
             # Right carriageway - ends exactly at right barrier visual start
             self.draw_dimension_arrow(painter, median_end_x, Y_TOP_COMMON, actual_cw_end, Y_TOP_COMMON,
-                                    label_cw, True, 
+                                    label_cw, True,
                                     extension_direction='down',
                                     extension_end_y=deck_top_y)
+            self._register_editable_label(KEY_CARRIAGEWAY_WIDTH, self._last_text_rect, cw_m)
         else:
             # Single carriageway
             cw_m = self.params['carriageway_width'] / 1000
@@ -2151,9 +2159,10 @@ class CrossSectionCADWidget(QWidget):
                 label_cw += f" = {cw_m:.2f} m"
             
             self.draw_dimension_arrow(painter, actual_cw_start, Y_TOP_COMMON, actual_cw_end, Y_TOP_COMMON,
-                                    label_cw, True, 
+                                    label_cw, True,
                                     extension_direction='down',
                                     extension_end_y=deck_top_y)
+            self._register_editable_label(KEY_CARRIAGEWAY_WIDTH, self._last_text_rect, cw_m)
         
         # Right footpath dimension
         if right_railing_present and right_fp_width > 0:
@@ -2206,9 +2215,10 @@ class CrossSectionCADWidget(QWidget):
                 label_gs += f" = {gs_m:.2f} m"
                 
             self.draw_dimension_arrow(painter, x_left, Y_GIRDER_SPACING, x_right, Y_GIRDER_SPACING,
-                                    label_gs, True, 
+                                    label_gs, True,
                                     extension_direction='up',
                                     extension_end_y=base_y)
+            self._register_editable_label(KEY_TS_GIRDER_SPACING, self._last_text_rect, gs_m)
         
         # FOOTPATH THICKNESS DIMENSION 
         fp_t_mm = self.params['footpath_thickness']
@@ -2287,6 +2297,8 @@ class CrossSectionCADWidget(QWidget):
             
             self.draw_text_with_background(painter, text_x, text_y, text,
                                         QColor(255, 255, 255, 255), QColor(0, 0, 0), 9, False)
+            self._register_editable_label(KEY_TS_DECK_THICKNESS, self._last_text_rect, deck_t_mm)
+
     def add_cross_section_hover_labels(self, painter, carriageway_start_x, carriageway_end_x,
                     left_barrier_x, right_barrier_x, deck_top_y, deck_bottom_y,
                     deck_thick_px, positions, base_y, scale, n, fp_config,

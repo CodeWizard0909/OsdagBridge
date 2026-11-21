@@ -94,6 +94,67 @@ def _build_nodes_members() -> tuple[dict, dict]:
     return nodes, members
 
 
+def _is_longitudinal(n1, n2, nodes, tol: float = 1e-3) -> bool:
+    """Runs along the span: both end nodes share the lateral (Z) and vertical (Y) coordinate."""
+    return (abs(nodes[n1][2] - nodes[n2][2]) < tol and
+            abs(nodes[n1][1] - nodes[n2][1]) < tol)
+
+
+def transverse_member_lines(nodes: dict, members: dict, edge_dist: float = 0.0, z_tol: int = 3) -> list[list[int]]:
+    """
+    Transverse structural members (end diaphragms and intermediate cross bracings),
+    grouped into one element chain per span station.
+
+    A member is transverse when it is not longitudinal (same rule as
+    _build_full_data). Of those, only members whose both ends sit on a girder line
+    are kept, so the deck overhang strips out to the edge beams are dropped. When
+    there is an overhang (edge_dist > 0) the outermost longitudinal lines are edge
+    beams, not girders, matching how plot_generator names G1..Gn.
+
+    Returns chains sorted along the span (first and last are the end diaphragms).
+    Each chain is ordered across the width, element j-node -> next element i-node,
+    so it can be walked like a girder polyline.
+    """
+    lines_z = sorted({round(nodes[n1][2], z_tol)
+                      for n1, n2 in members.values() if _is_longitudinal(n1, n2, nodes)})
+    if edge_dist > 0 and len(lines_z) > 2:
+        lines_z = lines_z[1:-1]
+    girder_z = set(lines_z)
+
+    on_girder = lambda n: round(nodes[n][2], z_tol) in girder_z
+    transverse = {
+        e: (n1, n2) for e, (n1, n2) in members.items()
+        if not _is_longitudinal(n1, n2, nodes) and on_girder(n1) and on_girder(n2)
+    }
+
+    # Elements of one station share girder nodes; different stations never do.
+    by_node: dict = {}
+    for e, (n1, n2) in transverse.items():
+        by_node.setdefault(n1, []).append(e)
+        by_node.setdefault(n2, []).append(e)
+
+    seen, lines = set(), []
+    for start in transverse:
+        if start in seen:
+            continue
+        group, stack = [], [start]
+        seen.add(start)
+        while stack:
+            e = stack.pop()
+            group.append(e)
+            for n in transverse[e]:
+                for nxt in by_node[n]:
+                    if nxt not in seen:
+                        seen.add(nxt)
+                        stack.append(nxt)
+        # order across the width by the element mid-point Z
+        group.sort(key=lambda e: nodes[transverse[e][0]][2] + nodes[transverse[e][1]][2])
+        lines.append(group)
+
+    mid_x = lambda line: sum(nodes[n][0] for e in line for n in transverse[e]) / (2 * len(line))
+    return sorted(lines, key=mid_x)
+
+
 def dump_full_data(
     model,
     edge_dist: float = 0.0,
@@ -409,14 +470,12 @@ def _build_full_data(model, edge_dist: float = 0.0, dataset=None, lazy: bool = F
         c) for c in ds0["displacements"].coords["Component"].values] if "displacements" in ds0.data_vars else []
 
     # Classify members: longitudinal = both nodes share same Z and same Y
-    _z_tol = 1e-3
     longitudinal_members = []
     transverse_members = []
     for tag, (n1, n2) in members.items():
         if n1 not in nodes or n2 not in nodes:
             continue
-        if (abs(nodes[n1][2] - nodes[n2][2]) < _z_tol and
-                abs(nodes[n1][1] - nodes[n2][1]) < _z_tol):
+        if _is_longitudinal(n1, n2, nodes):
             longitudinal_members.append(tag)
         else:
             transverse_members.append(tag)

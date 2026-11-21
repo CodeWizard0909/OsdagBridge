@@ -1552,6 +1552,97 @@ def build_figure_deflection(ds, disp_key, nodes, members, edge_dist=0.0, eng_sca
     return fig, summary_data
 
 
+# =============================================================================
+# TRANSVERSE MEMBERS PLOT (end diaphragms + intermediate cross bracings)
+# =============================================================================
+
+def _transverse_line_names(n_lines):
+    """ED1, CB1 … CBk, ED2: the two end lines sit on the supports, the rest are cross bracings."""
+    if n_lines == 1:
+        return ["ED1"]
+    return ["ED1"] + [f"CB{k}" for k in range(1, n_lines - 1)] + ["ED2"]
+
+
+def build_figure_transverse(ds, key, nodes, members, lines, eng_scale=1.0):
+    """
+    3-D diagram of a force (Fx…Mz) or displacement (Dx…Dz) along every transverse line.
+
+    `lines` comes from results_data.transverse_member_lines(): one element chain per span
+    station, ordered across the width. Each diagram is drawn across the bridge width at
+    its own span position. Sign and unit rules follow the girder plots: forces use the
+    SFD convention (kN), moments the BMD one (kNm, positive plotted downward),
+    displacements are node values in mm with vertical sag positive.
+    """
+    v_scale = _value_plot_scale(eng_scale)
+    is_disp = key in DISP_MAP
+    is_moment = key.startswith("M")
+    label = DISP_DISPLAY.get(key, key) if is_disp else FORCE_DISPLAY.get(key, key)
+    unit = "mm" if is_disp else ("kNm" if is_moment else "kN")
+    color, fill = ("#6A1B9A", "#CE93D8") if is_disp else (("#C62828", "#EF9A9A") if is_moment else ("#1565C0", "#90CAF9"))
+
+    fig = Figure(figsize=(14, 6), dpi=110, facecolor="white")
+    ax = fig.add_subplot(111, projection="3d", facecolor="white")
+
+    all_xs = [c[0] for c in nodes.values()]
+    all_zs = [c[2] for c in nodes.values()]
+    x_range = max(all_xs) - min(all_xs) or 1.0
+    z_range = max(all_zs) - min(all_zs) or 1.0
+    _add_grillage_background(ax, nodes, members, show_transverse=True,
+                             include_edge_longitudinals=False, show_inner_nodes=False)
+
+    if is_disp:
+        comp = {"dx": "x", "dy": "y", "dz": "z"}[DISP_MAP[key]]
+        comp = next(c for c in ds["displacements"].coords["Component"].values if str(c).lower() == comp)
+        sag = -1.0 if comp.lower() in ("y", "z") else 1.0  # same flip as build_figure_deflection
+
+    summary_data, vmin, vmax = {}, 0.0, 0.0
+    for name, elems in zip(_transverse_line_names(len(lines)), lines):
+        if is_disp:
+            chain = [members[elems[0]][0]] + [members[e][1] for e in elems]
+            xs = np.array([nodes[n][0] for n in chain])
+            zs = np.array([nodes[n][2] for n in chain])
+            vals = np.array([sag * 1000.0 * float(ds["displacements"].sel(Node=n, Component=comp).values)
+                             for n in chain])
+        else:
+            xs, _, zs, vals, _ = _build_polyline(elems, members, nodes, *FORCE_MAP[key], ds)
+            if not is_moment:
+                vals[-1] = -vals[-1]  # j-end shear sign, as in build_figure_sfd
+        y_plot = (-vals if is_moment else vals) * v_scale
+        vmin, vmax = min(vmin, float(y_plot.min())), max(vmax, float(y_plot.max()))
+
+        if is_disp or is_moment:
+            px, pz, py = xs, zs, y_plot
+        else:  # force is constant along each element: stepped, as in build_figure_sfd
+            px, pz = np.repeat(xs, 2)[1:-1], np.repeat(zs, 2)[1:-1]
+            py = np.repeat(y_plot[:-1], 2)
+        ax.plot_surface(np.vstack([px, px]), np.vstack([pz, pz]),
+                        np.vstack([np.zeros_like(py), py]),
+                        color=fill, alpha=0.25, linewidth=0, antialiased=False, zorder=2)
+        ax.plot(px, pz, py, color=color, linewidth=2.0, zorder=4)
+        ax.text(xs[0], zs[0] - z_range * 0.04, 0, name, color="black", fontsize=10,
+                ha="center", va="top", zorder=50, gid="girder_labels")
+
+        i_max, i_min = int(np.argmax(vals)), int(np.argmin(vals))
+        summary_data[name] = {"max": float(vals[i_max]), "min": float(vals[i_min])}
+        for idx, gid in ((i_max, "max_line"), (i_min, "min_line")):
+            ax.text(xs[idx], zs[idx], y_plot[idx], f" {vals[idx]:.3f} {unit}", color="black",
+                    fontsize=7, fontweight="bold", zorder=11, gid=gid,
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8, edgecolor="none"))
+
+    ax.set_xlim(min(all_xs) - 0.05 * x_range, max(all_xs) + 0.05 * x_range)
+    ax.set_ylim(min(all_zs) - 0.05 * z_range, max(all_zs) + 0.05 * z_range)
+    pad = max(1e-6, 0.05 * max(1e-9, vmax - vmin))
+    ax.set_zlim(min(0.0, vmin) - pad, max(0.0, vmax) + pad)
+    ax.set_box_aspect([x_range, z_range, (x_range * 0.30) * max(v_scale, 1e-6)])
+    _set_value_axis_tick_formatter(ax, v_scale)
+    ax.set_title(f"Transverse Members  —  {label} ({unit})", fontsize=12, fontweight="bold", pad=12)
+    fig._eng_scale = v_scale
+    ax.view_init(elev=DEFAULT_ELEV + 15, azim=DEFAULT_AZIM + 30)  # oblique: lines run across the width
+    _add_coordinate_triad(ax, nodes, eng_scale=v_scale)
+    ax.set_axis_off()
+    return fig, summary_data
+
+
 def figure_to_bytes(fig, fmt="png", dpi=150):
     """Convenience helper — render a matplotlib figure to raw bytes."""
     buf = io.BytesIO()

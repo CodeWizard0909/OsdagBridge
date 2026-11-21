@@ -43,6 +43,12 @@ TYPE_SEGMENT_TABLE  = "segment_table"
 TYPE_ADAPTIVE = "adaptive"
 TYPE_ALL_CUSTOM = "all_custom"   # combo [All, Custom] where Custom opens popup dialog
 
+# Choice text that switches a field to user-entered values, and the object-name
+# suffixes TYPE_MODE_LINE / TYPE_MODE_VALUE give their mode and value widgets.
+VALUE_CUSTOM = "Custom"
+SUFFIX_MODE  = ".mode"
+SUFFIX_VALUE = ".value"
+
 # ========== Type of Fields End ==========================================================
 
 # Keys for inputs (consistent dot notation for object names)
@@ -132,6 +138,8 @@ KEY_SECTION_OUTPUT_STEELDESIGN = "section.output.superstructure.steeldesign"
 
 # ── Output field keys ─────────────────────────────────────────────────────────
 KEY_ANALYSIS_MEMBER           = "analysis.member"
+# Analysis member dropdown entry that plots end diaphragms + cross bracings instead of a girder
+VALUE_TRANSVERSE_MEMBERS      = "Transverse Members"
 KEY_ANALYSIS_LOAD_COMBINATION = "analysis.load_combination"
 KEY_ANALYSIS_FORCES           = "analysis.forces"
 KEY_ANALYSIS_DISPLAY_OPTIONS  = "analysis.display_options"

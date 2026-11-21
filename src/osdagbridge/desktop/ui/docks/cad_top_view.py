@@ -6,9 +6,10 @@ Author: Arushi
 from osdagbridge.core.utils.common import *
 import math
 from PySide6.QtWidgets import QWidget, QPushButton, QScrollArea
-from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer, QSize, Signal
 from PySide6.QtGui import QPainter, QPen, QColor, QFont, QBrush, QPolygonF, QIcon
 from .cad_cross_section import CrossSectionCADWidget
+from .cad_label_editing import EditableCadLabels
 
 # ---- CAD Grey Palette ----
 CAD_DARK_GREY   = QColor(90, 90, 90)
@@ -25,9 +26,11 @@ DIM_STACK_GAP = 28         # vertical gap between stacked dimensions
 LEADER_TEXT_OFFSET = 25    # leader label distance
 
 
-class TopViewCADWidget(QWidget):
+class TopViewCADWidget(EditableCadLabels, QWidget):
     """Widget for drawing bridge top view"""
-    
+    # (input key, typed text) after a label is edited in place; see EditableCadLabels
+    label_value_edited = Signal(str, str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.show_dimensions = True
@@ -480,7 +483,8 @@ class TopViewCADWidget(QWidget):
     def paintEvent(self, event):
         # clear hover zones at start of each paint
         self.top_view_hover_zones = []
-        
+        self._begin_editable_labels()
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(255, 255, 255))
@@ -514,6 +518,7 @@ class TopViewCADWidget(QWidget):
             max_width + 2 * padding,
             total_height + 2 * padding
         )
+        self._last_text_rect = bg_rect  # read by callers that register an editable label
 
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(bg_color))
@@ -1301,6 +1306,7 @@ class TopViewCADWidget(QWidget):
             painter, x1_span, dim_y2, x2_span, dim_y2,
             label_span, last_girder_y
         )
+        self._register_editable_label(KEY_SPAN, self._last_text_rect, span_m)
 
         # GIRDER SPACING dimension (always visible)
         if n > 1:
@@ -1336,6 +1342,7 @@ class TopViewCADWidget(QWidget):
                 QColor(255, 255, 255, 240),
                 QColor(0, 0, 0), 9, False
             )
+            self._register_editable_label(KEY_TS_GIRDER_SPACING, self._last_text_rect, gs_m)
 
         # CL OF BEARING labels - ALWAYS VISIBLE (moved outside hover condition)
         label_y_bearing = top_extent - 8

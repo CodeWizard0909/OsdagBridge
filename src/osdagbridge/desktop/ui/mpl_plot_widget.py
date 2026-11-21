@@ -22,11 +22,14 @@ from osdagbridge.core.bridge_types.plate_girder.plot_generator import (
     build_figure_bmd,
     build_figure_deflection,
     build_figure_grillage,
+    build_figure_transverse,
     _add_node_number_labels,
     _add_element_number_labels,
     FORCE_MAP,
     DISP_MAP,
 )
+from osdagbridge.core.bridge_types.plate_girder.results_data import transverse_member_lines
+from osdagbridge.core.utils.common import VALUE_TRANSVERSE_MEMBERS
 
 # Forces starting with "F" -> shear (SFD); starting with "M" -> moment (BMD)
 _SFD_KEYS  = {k for k in FORCE_MAP if k.startswith("F")}
@@ -413,6 +416,7 @@ class MplPlotWidget(QWidget):
         self._nodes     = nodes
         self._members   = members
         self._edge_dist = edge_dist
+        self._transverse_lines = transverse_member_lines(nodes, members, edge_dist)
 
         if hasattr(self, '_fig') and self._fig.axes:
             ax = self._fig.axes[0]
@@ -525,7 +529,12 @@ class MplPlotWidget(QWidget):
         ds = self._ds_all.sel(Loadcase=loadcase)
         
         old_elev, old_azim = None, None
-        if hasattr(self, '_fig') and self._fig and self._fig.axes:
+        # Keep the user's camera only between plots of the same kind: girder diagrams run
+        # along the span, transverse ones across the width, so each needs its own default view.
+        is_transverse = sel_girder == VALUE_TRANSVERSE_MEMBERS
+        same_kind = is_transverse == getattr(self, "_last_plot_transverse", False)
+        self._last_plot_transverse = is_transverse
+        if same_kind and hasattr(self, '_fig') and self._fig and self._fig.axes:
             old_ax = self._fig.axes[0]
             if hasattr(old_ax, 'elev'):
                 old_elev = old_ax.elev
@@ -538,7 +547,12 @@ class MplPlotWidget(QWidget):
 
         # (Your existing if/elif/else block to build the new figures)
         eng_scale = self._eng_scale
-        if force_key in _SFD_KEYS:
+        if sel_girder == VALUE_TRANSVERSE_MEMBERS:
+            self._fig, self._summary_data = build_figure_transverse(
+                ds, force_key, self._nodes, self._members,
+                getattr(self, "_transverse_lines", []), eng_scale=eng_scale,
+            )
+        elif force_key in _SFD_KEYS:
             self._fig, self._summary_data = build_figure_sfd(
                 ds, force_key, self._nodes, self._members,
                 edge_dist=self._edge_dist, eng_scale=eng_scale,
@@ -716,6 +730,8 @@ class MplPlotWidget(QWidget):
                 old_azim = self._fig.axes[0].azim
             plt.close(self._fig)
             sel_girder = self._current_member()
+            if sel_girder == VALUE_TRANSVERSE_MEMBERS:
+                sel_girder = "All"  # the grillage view filters by girder only
             self._fig = build_figure_grillage(self._nodes, self._members, edge_dist=self._edge_dist, selected_girder=sel_girder)
             self._attach_figure(self._fig)
             if self._fig.axes and old_elev is not None and old_azim is not None:
